@@ -1,0 +1,94 @@
+import wfdb
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from scipy.signal import find_peaks
+
+def nacti_signal(cesta_k_souboru):
+    """Načte jeden EKG signál ze souboru."""
+    zaznam = wfdb.rdrecord(cesta_k_souboru)
+    return zaznam
+
+def detekuj_r_peaks(signal, fs):
+    """Detekce R-peaků v EKG signálu."""
+    peaks, _ = find_peaks(signal, height=np.mean(signal) + 0.5*np.std(signal), distance=0.6*fs)
+    return peaks
+
+def detekuj_anomalie(signal, limit_nizke=-1.0, limit_vysoke=2.0):
+    """Detekce anomálií v EKG signálu podle limitů."""
+    anomalie_nizke = [(i, signal[i]) for i in range(len(signal)) if signal[i] < limit_nizke]
+    anomalie_vysoke = [(i, signal[i]) for i in range(len(signal)) if signal[i] > limit_vysoke]
+    return anomalie_nizke, anomalie_vysoke
+
+def vytvor_statistiku_anomalii(anomalie_nizke, anomalie_vysoke, r_peaks, signal):
+    """Vytvoří statistiku o detekovaných anomáliích."""
+    statistika = {
+        "Vysoké amplitudy R vrcholů": len([p for p in r_peaks if signal[p] > np.mean(signal) + np.std(signal)]),
+        "Nízké amplitudy": len(anomalie_nizke),
+        "Vysoké amplitudy": len(anomalie_vysoke),
+        "Celkem": len(anomalie_nizke) + len(anomalie_vysoke)
+    }
+    return statistika
+
+def vykresli_signal_a_statistiku(signal, time, anomalie_nizke, anomalie_vysoke, r_peaks, statistika, nazev_zaznamu):
+    """Vykreslí signál s anomáliemi, R-peaky a tabulku statistik pod grafem."""
+    fig, axs = plt.subplots(2, 1, figsize=(10, 8), gridspec_kw={'height_ratios': [3, 1]})
+
+    #  Graf signálu s R-peaky a anomáliemi
+    axs[0].plot(time, signal, label="EKG signál", color='blue')
+
+    # R-peaky (zelené)
+    if len(r_peaks) > 0:
+        axs[0].scatter(time[r_peaks], signal[r_peaks], color='green', label="R-peaky", marker='o')
+
+    # Anomálie nízké (červené křížky)
+    if anomalie_nizke:
+        indexy, hodnoty = zip(*anomalie_nizke)
+        axs[0].scatter(np.array(indexy) / fs + time[0], hodnoty, color='red', label="Nízké anomálie", marker='x')
+
+    # Anomálie vysoké (oranžové čtverečky)
+    if anomalie_vysoke:
+        indexy, hodnoty = zip(*anomalie_vysoke)
+        axs[0].scatter(np.array(indexy) / fs + time[0], hodnoty, color='orange', label="Vysoké anomálie", marker='s')
+
+    axs[0].set_title(f"EKG signál s R-peaky a anomáliemi - {nazev_zaznamu}")
+    axs[0].set_xlabel("Čas (s)")
+    axs[0].set_ylabel("Amplituda")
+    axs[0].legend()
+    axs[0].grid()
+
+    #  Tabulka statistik
+    df = pd.DataFrame(statistika.items(), columns=["Typ anomálie", "Počet výskytů"])
+    axs[1].axis("tight")
+    axs[1].axis("off")
+    axs[1].table(cellText=df.values, colLabels=df.columns, cellLoc="center", loc="center")
+
+    plt.tight_layout()
+    plt.show()
+
+# Cesta k souboru
+cesta_k_souboru = r"C:\Users\ondra\OneDrive\Plocha\brno-university-of-technology-ecg-quality-database-but-qdb-1.0.0\100001\100001_ECG"
+
+# Načtení signálu
+ekg_signal = nacti_signal(cesta_k_souboru)
+fs = ekg_signal.fs  # Vzorkovací frekvence
+
+# Parametry signálu
+start_time = 20  # Start v sekundách
+end_time = 40  # Konec v sekundách
+start_sample = int(start_time * fs)
+end_sample = int(end_time * fs)
+
+# Výběr úseku signálu
+signal = ekg_signal.p_signal[start_sample:end_sample, 0]
+time = np.arange(start_sample, end_sample) / fs
+
+# Detekce R-peaků a anomálií
+r_peaks = detekuj_r_peaks(signal, fs)
+anomalie_nizke, anomalie_vysoke = detekuj_anomalie(signal)
+
+# Vytvoření tabulky statistik
+statistika = vytvor_statistiku_anomalii(anomalie_nizke, anomalie_vysoke, r_peaks, signal)
+
+# Vykreslení grafu a tabulky
+vykresli_signal_a_statistiku(signal, time, anomalie_nizke, anomalie_vysoke, r_peaks, statistika, ekg_signal.record_name)
