@@ -1,0 +1,161 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import sounddevice as sd
+import wfdb
+from scipy.signal import find_peaks
+import pandas as pd
+
+#  Funkce pro načtení zvukového souboru
+def nacti_zvukovy_soubor(cesta):
+    return wfdb.rdrecord(cesta)
+
+
+# Funkce pro zobrazení zvukového signálu 
+def zobrazeni_signalu(osi_casu, signaly):
+    plt.figure(figsize=(15, 2))
+    plt.plot(osi_casu, signaly)
+    plt.title("Zvukový záznam")
+    plt.xlabel("Čas (s)")
+    plt.ylabel("Amplituda")
+    plt.grid(True)
+    plt.show()
+
+
+
+# Funkce pro kepstrální analýzu
+def kepstralni_analyza(signal):
+    fft_spektrum = np.fft.fft(signal)
+    log_spektrum = np.log(np.abs(fft_spektrum) + 1e-10)  # Logaritmus spektra
+    kepstrum = np.fft.ifft(log_spektrum).real
+    plt.figure(figsize=(10, 5))
+    plt.plot(kepstrum)
+    plt.title("Kepstrální analýza")
+    plt.xlabel("Quefrence (vzorky)")
+    plt.ylabel("Amplituda")
+    plt.grid()
+    plt.show()
+    return kepstrum
+
+#  Funkce pro přehrání zvukového signálu 
+def prehrani_signalu(signaly, vzorkovaci_frekvence):
+    signaly_normalizovane = (signaly * 32768).astype(np.int16)
+    sd.play(signaly_normalizovane, samplerate=vzorkovaci_frekvence)
+    sd.wait()
+
+ #  Funkce pro vykreslení FFT spektra 
+def vykreslit_fft_spektrum(frekvencni_os, spektrum, nazev_signalu):
+    plt.figure(figsize=(10, 5))
+    plt.plot(frekvencni_os, spektrum, label="Spektrum")
+    plt.title(f"FFT analýza signálu {nazev_signalu}")
+    plt.xlabel("Frekvence (Hz)")
+    plt.ylabel("Amplituda")
+    plt.grid()
+    plt.legend()
+    plt.show()
+
+#  Funkce pro vykreslení STFT 
+def vykreslit_stft(casova_os, signal, frekvence, casy, spektralni_koef, energie, vrcholy, nazev_signalu):
+    plt.figure(figsize=(15, 10))
+
+    plt.subplot(3, 1, 1)
+    plt.plot(casova_os, signal, color='blue')
+    plt.title(f"Časový průběh signálu {nazev_signalu}")
+    plt.xlabel("Čas (s)")
+    plt.ylabel("Amplituda")
+    plt.grid()
+
+    plt.subplot(3, 1, 2)
+    plt.pcolormesh(casy, frekvence, np.abs(spektralni_koef), shading='gouraud')
+    plt.colorbar(label='Magnituda')
+    plt.title("Spektrogram signálu (STFT)")
+    plt.xlabel("Čas (s)")
+    plt.ylabel("Frekvence (Hz)")
+
+    plt.subplot(3, 1, 3)
+    plt.plot(casy, energie, label='Energie v časových segmentech', color='brown')
+    plt.scatter(casy[vrcholy], energie[vrcholy], color='red', label='Detekované vrcholy', zorder=5)
+    plt.xlabel("Čas (s)")
+    plt.ylabel("Energie")
+    plt.title("Energetická analýza signálu")
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+#  Funkce pro detekci abnormalit v signálu 
+def detekce_abnormalit(signal, vzorkovaci_frekvence, prah_amplituda=3, prah_spektrum=3):
+    # Derivace signálu pro detekci náhlých změn
+    derivace = np.diff(signal)
+
+    # Hledání náhlých skoků v amplitudě
+    abnormality_amplituda = np.where(np.abs(derivace) > prah_amplituda * np.std(derivace))[0]
+
+    # FFT spektrum pro frekvenční analýzu
+    N = len(signal)
+    fft_spektrum = np.fft.fft(signal)
+    amplitudy_spektrum = np.abs(fft_spektrum)
+    prumer_spektrum = np.mean(amplitudy_spektrum)
+    odchylka_spektrum = np.std(amplitudy_spektrum)
+
+    # Detekce abnormalit ve frekvenčním spektru
+    abnormality_spektrum = np.where(amplitudy_spektrum > prah_spektrum * odchylka_spektrum + prumer_spektrum)[0]
+
+    # Vykreslení výsledků
+    plt.figure(figsize=(12, 5))
+    plt.plot(signal, label="Zvukový signál", alpha=0.7)
+    plt.scatter(abnormality_amplituda, signal[abnormality_amplituda], color='red', label="Abnormality v amplitudě")
+    plt.xlabel("Vzorek")
+    plt.ylabel("Amplituda")
+    plt.title("Detekce abnormalit v signálu")
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+    return abnormality_amplituda, abnormality_spektrum
+
+ # Funkce pro vykreslení tabulky s výsledky
+def vykresleni_tabulky(dobre, patologicke):
+    df = pd.DataFrame({
+        "Typ": ["Dobré", "Patologické"],
+        "Počet vzorků": [len(dobre), len(patologicke)],
+        "Průměrná hodnota": [np.mean(dobre) if len(dobre) > 0 else 0, np.mean(patologicke) if len(patologicke) > 0 else 0],
+        "Směrodatná odchylka": [np.std(dobre) if len(dobre) > 0 else 0, np.std(patologicke) if len(patologicke) > 0 else 0]
+    })
+    print(df)
+
+#  Načtení souboru a analýza 
+soubor = nacti_zvukovy_soubor(r"C:\Users\ondra\OneDrive\Plocha\voice-icar-federico-ii-database-1.0.0\voice002")
+print(f"Detaily souboru: {soubor.__dict__}")
+# Získáme signál a vzorkovací frekvenci
+zvukovy_signál = soubor.p_signal.flatten()
+vzorkovaci_frekvence = soubor.fs
+
+# Vypočítáme délku signálu v čase
+doba_signalu = len(zvukovy_signál) / vzorkovaci_frekvence
+casova_os = np.linspace(0, doba_signalu, len(zvukovy_signál))
+
+#  . Spuštění všech funkcí 
+# Zobrazení signálu
+zobrazeni_signalu(casova_os, zvukovy_signál)
+
+# Přehrání signálu
+prehrani_signalu(zvukovy_signál, vzorkovaci_frekvence)
+
+# Výpočet FFT a zobrazení spektra
+N = len(zvukovy_signál)
+frekvence = np.fft.fftfreq(N, d=1/vzorkovaci_frekvence)
+fft_spektrum = np.abs(np.fft.fft(zvukovy_signál))
+
+vykreslit_fft_spektrum(frekvence[:N // 2], fft_spektrum[:N // 2], "Hlasový signál")
+
+# Detekce abnormalit
+abnorm_amplituda, abnorm_spektrum = detekce_abnormalit(zvukovy_signál, vzorkovaci_frekvence)
+
+# Kepstrální analýza
+kepstrum = kepstralni_analyza(zvukovy_signal)
+
+# Rozdělení signálu na dobré a patologické úseky
+dobre, patologicke = rozdeleni_signalu(zvukovy_signal, spektrum)
+
+# Vykreslení tabulky
+vykresleni_tabulky(dobre, patologicke)
