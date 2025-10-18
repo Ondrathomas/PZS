@@ -1,0 +1,131 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import sounddevice as sd
+import wfdb
+import pandas as pd
+
+
+
+def nacti_zaznam(cesta):
+    """Načte zvukový soubor pomocí WFDB."""
+    return wfdb.rdrecord(cesta)
+
+
+def zobraz_signal(cas, signal, nazev):
+    """Vykreslí časový průběh signálu."""
+    plt.figure(figsize=(14, 3))
+    plt.plot(cas, signal, color='steelblue')
+    plt.title(f"Časový průběh – {nazev}")
+    plt.xlabel("Čas [s]")
+    plt.ylabel("Amplituda")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+def prehrat_signal(signal, fs):
+    """Přehrát signál pomocí sounddevice."""
+    norm = (signal * 32768).astype(np.int16)
+    sd.play(norm, samplerate=fs)
+    sd.wait()
+
+
+def fft_analyza(signal, fs, popisek=""):
+    """Provede FFT analýzu signálu a vykreslí spektrum.
+     Vrací spektrum signálu.
+    """
+    N = len(signal)
+    frekvence = np.fft.fftfreq(N, d=1/fs)
+    spektrum = np.abs(np.fft.fft(signal))
+
+    plt.figure(figsize=(10, 4))
+    plt.plot(frekvence[:N // 2], spektrum[:N // 2], color='darkorange')
+    plt.title(f"Spektrum signálu – {popisek}")
+    plt.xlabel("Frekvence [Hz]")
+    plt.ylabel("Amplituda")
+    plt.grid(True)
+    plt.show()
+
+    return spektrum
+
+
+def kepstralni_analyza(signal, nazev=""):
+    """Provede kepstrální analýzu signálu
+        a vykreslí kepstrum. Vrací kepstrum signálu.
+    """
+    fft_spektrum = np.fft.fft(signal)
+    log_spektrum = np.log(np.abs(fft_spektrum) + 1e-10)
+    kepstrum = np.fft.ifft(log_spektrum).real
+
+    plt.figure(figsize=(10, 4))
+    plt.plot(kepstrum, color='seagreen')
+    plt.title(f"Kepstrální analýza – {nazev}")
+    plt.xlabel("Quefrence (vzorky)")
+    plt.ylabel("Amplituda")
+    plt.grid(True)
+    plt.show()
+    return kepstrum
+
+
+def rozdeleni_signalu(signal, spektrum, prah=1.5):
+    """Rozdělí signál na „dobré“ a „patologické“ úseky podle spektrální energie.
+    Prahová hodnota je násobkem směrodatné odchylky.
+    """
+    prumer = np.mean(spektrum)
+    std = np.std(spektrum)
+    hranice = prumer + prah * std
+
+    maska = spektrum > hranice
+    dobre = signal[~maska[:len(signal)]]
+    patologicke = signal[maska[:len(signal)]]
+
+    return dobre, patologicke
+
+
+def tabulka_vysledku(nazev, dobre, patologicke):
+    """Vytvoří jednoduchou přehledovou tabulku s charakteristikami
+     pro dobré a patologické úseky signálu.
+     """
+    df = pd.DataFrame({
+        "Úsek": ["Dobré", "Patologické"],
+        "Počet vzorků": [len(dobre), len(patologicke)],
+        "Průměr": [np.mean(dobre) if len(dobre) else 0, np.mean(patologicke) if len(patologicke) else 0],
+        "Směr. odch.": [np.std(dobre) if len(dobre) else 0, np.std(patologicke) if len(patologicke) else 0]
+    })
+    print(f"\n📊 Výsledky pro {nazev}:")
+    print(df)
+    return df
+
+
+seznam_souboru = [
+    r"C:\\Users\\ondra\\OneDrive\\Plocha\\voice-icar-federico-ii-database-1.0.0\\voice003",
+    r"C:\\Users\\ondra\\OneDrive\\Plocha\\voice-icar-federico-ii-database-1.0.0\\voice004",
+    r"C:\\Users\\ondra\\OneDrive\\Plocha\\voice-icar-federico-ii-database-1.0.0\\voice005"
+    
+]
+vysledky = []
+
+for cesta in seznam_souboru:
+    zaznam = nacti_zaznam(cesta)
+    signal = zaznam.p_signal.flatten()
+    fs = zaznam.fs
+    cas = np.linspace(0, len(signal)/fs, len(signal))
+
+    nazev = zaznam.record_name
+    print(f"\nZpracovávám soubor: {nazev}")
+
+    # Zobrazení průběhu a FFT
+    zobraz_signal(cas, signal, nazev)
+    spektrum = fft_analyza(signal, fs, nazev)
+
+    # Kepstrum
+    kepstrum = kepstralni_analyza(signal, nazev)
+
+    # Rozdělení
+    dobre, patologicke = rozdeleni_signalu(signal, spektrum)
+
+    # Tabulka
+    df = tabulka_vysledku(nazev, dobre, patologicke)
+    vysledky.append(df)
+
+print("\nAnalýza všech signálů dokončena ✅")
